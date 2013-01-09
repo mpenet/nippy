@@ -152,17 +152,18 @@
 
 (defn freeze-to-stream!
   "Serializes x to given output stream."
-  [{:keys [] :as options} data-output-stream x]
-  (binding [*print-dup* true] ; For `pr-str`
+  [{:keys [print-dup?] :as options} data-output-stream x]
+  (binding [*print-dup* print-dup?] ; For `pr-str`
     (freeze-to-stream!* data-output-stream x)))
 
 (defn freeze-to-bytes
   "Serializes x to a byte array and returns the array."
-  ^bytes [x & {:keys [compress?]
-               :or   {compress? true}}]
+  ^bytes [x & {:keys [compress?  print-dup?]
+               :or   {compress?  true
+                      print-dup? true}}]
   (let [ba     (ByteArrayOutputStream.)
         stream (DataOutputStream. ba)]
-    (freeze-to-stream! {} stream x)
+    (freeze-to-stream! {:print-dup? print-dup?} stream x)
     (let [ba (.toByteArray ba)]
       (if compress? (Snappy/compress ba) ba))))
 

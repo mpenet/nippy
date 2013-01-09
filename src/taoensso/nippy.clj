@@ -152,7 +152,7 @@
 
 (defn freeze-to-stream!
   "Serializes x to given output stream."
-  [data-output-stream x]
+  [{:keys [] :as options} data-output-stream x]
   (binding [*print-dup* true] ; For `pr-str`
     (freeze-to-stream!* data-output-stream x)))
 
@@ -162,7 +162,7 @@
                :or   {compress? true}}]
   (let [ba     (ByteArrayOutputStream.)
         stream (DataOutputStream. ba)]
-    (freeze-to-stream! stream x)
+    (freeze-to-stream! {} stream x)
     (let [ba (.toByteArray ba)]
       (if compress? (Snappy/compress ba) ba))))
 
@@ -231,7 +231,7 @@
 
 (defn thaw-from-stream!
   "Deserializes an object from given input stream."
-  [data-input-stream read-eval?]
+  [{:keys [read-eval?] :as options} data-input-stream]
   (binding [*read-eval* read-eval?]
     (let [;; Support older versions of Nippy that wrote a version header
           maybe-schema-header (thaw-from-stream!* data-input-stream)]
@@ -245,10 +245,10 @@
   [ba & {:keys [read-eval? compressed?]
          :or   {read-eval?  false ; For `read-string` injection safety - NB!!!
                 compressed? true}}]
-  (-> (if compressed? (Snappy/uncompress ba) ba)
-      (ByteArrayInputStream.)
-      (DataInputStream.)
-      (thaw-from-stream! read-eval?)))
+  (->> (if compressed? (Snappy/uncompress ba) ba)
+       (ByteArrayInputStream.)
+       (DataInputStream.)
+       (thaw-from-stream! {:read-eval? read-eval?})))
 
 (def stress-data
   "Reference data used for tests & benchmarks."

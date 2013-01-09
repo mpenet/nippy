@@ -1,8 +1,11 @@
 Current [semantic](http://semver.org/) version:
 
 ```clojure
-[com.taoensso/nippy "1.0.1"]
+[com.taoensso/nippy "2.0.0"]
 ```
+
+### Breaking changes since 1.x
+ * Low-level `freeze-to-steam!` and `thaw-from-stream!` fns now take an options map.
 
 # Nippy, a Clojure serialization library
 
@@ -25,7 +28,7 @@ Nippy is an attempt to provide a drop-in, high-performance alternative to the re
 Depend on Nippy in your `project.clj`:
 
 ```clojure
-[com.taoensso/nippy "1.0.1"]
+[com.taoensso/nippy "2.0.0"]
 ```
 
 and `require` the library:

@@ -212,6 +212,8 @@
 
 (declare thaw-from-buffer)
 
+(def byte-buffer (ByteBuffer/allocateDirect (* 100 1024 1024)))
+
 (defn coll-thaw
   "Thaws simple collection types."
   [coll ^ByteBuffer bb]
@@ -297,7 +299,8 @@
           (let [^"[B" ba data-ba
                 ba (if password   (encryption/decrypt encryptor password ba) ba)
                 ba (if compressor (compression/decompress compressor ba) ba)
-                bb (doto ^ByteBuffer (ByteBuffer/allocateDirect (alength ba))
+                bb (doto ^ByteBuffer byte-buffer
+                         (.clear)
                          (.put ba)
                          (.flip))]
             (binding [*read-eval* read-eval?] (thaw-from-buffer bb))))
@@ -442,3 +445,8 @@
             :compressor   (when compressed? compression/default-snappy-compressor)
             :password     password
             :legacy-mode  true}))
+
+
+;; (prn byte-buffer)
+;; (def a (freeze 1))
+;; (prn (thaw a ))

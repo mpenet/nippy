@@ -8,6 +8,7 @@
              (encryption  :as encryption)])
   (:import  [java.io DataOutputStream ByteArrayOutputStream]
             [java.nio ByteBuffer]
+            [io.netty.buffer Unpooled ByteBuf]
             [clojure.lang Keyword BigInt Ratio PersistentQueue PersistentTreeMap
              PersistentTreeSet IPersistentList IPersistentVector IPersistentMap
              IPersistentSet IPersistentCollection]))
@@ -89,21 +90,21 @@
 
 (defn- read-bytes
   "Reads arbitrary byte data, preceded by its length."
-  ^bytes [^ByteBuffer bb]
-  (let [size (.getInt bb)
+  ^bytes [^ByteBuf bb]
+  (let [size (.readInt bb)
         ba   (byte-array size)]
-    (.get bb ba 0 size)
+    (.readBytes bb ba 0 size)
     ba))
 
 (defn- read-utf8
   "Reads arbitrary byte data to an utf-8 string"
-  ^String [^ByteBuffer bb]
+  ^String [^ByteBuf bb]
   (String. (read-bytes bb) "UTF-8"))
 
 (defn- read-biginteger
   "Wrapper around `read-bytes` for common case of reading a BigInteger.
   Note that as of Clojure 1.3, java.math.BigInteger ≠ clojure.lang.BigInt."
-  ^BigInteger [^ByteBuffer bb]
+  ^BigInteger [^ByteBuf bb]
   (BigInteger. (read-bytes bb)))
 
 ;;;; Freezing
@@ -214,27 +215,27 @@
 
 (defn coll-thaw
   "Thaws simple collection types."
-  [coll ^ByteBuffer bb]
-  (utils/repeatedly-into coll (.getInt bb) #(thaw-from-buffer bb)))
+  [coll ^ByteBuf bb]
+  (utils/repeatedly-into coll (.readInt bb) #(thaw-from-buffer bb)))
 
 (defn coll-thaw-kvs
   "Thaws key-value collection types."
-  [coll ^ByteBuffer bb]
-  (utils/repeatedly-into coll (/ (.getInt bb) 2)
+  [coll ^ByteBuf bb]
+  (utils/repeatedly-into coll (/ (.readInt bb) 2)
     (fn [] [(thaw-from-buffer bb) (thaw-from-buffer bb)])))
 
 (defn- thaw-from-buffer
-  [^ByteBuffer bb]
-  (let [type-id (.get bb)]
+  [^ByteBuf bb]
+  (let [type-id (.readByte bb)]
     (utils/case-eval
      type-id
 
      id-reader  (read-string (read-utf8 bb))
      id-bytes   (read-bytes bb)
      id-nil     nil
-     id-boolean (= 1 (.get bb))
+     id-boolean (.readBoolean bb)
 
-     id-char    (.getChar bb)
+     id-char    (.readChar bb)
      id-string  (read-utf8 bb)
      id-keyword (keyword (read-utf8 bb))
 
@@ -250,15 +251,15 @@
 
      id-meta (let [m (thaw-from-buffer bb)] (with-meta (thaw-from-buffer bb) m))
 
-     id-byte    (.get bb)
-     id-short   (.getShort bb)
-     id-integer (.getInt bb)
-     id-long    (.getLong bb)
+     id-byte    (.readByte bb)
+     id-short   (.readShort bb)
+     id-integer (.readInt bb)
+     id-long    (.readLong bb)
      id-bigint  (bigint (read-biginteger bb))
 
-     id-float  (.getFloat bb)
-     id-double (.getDouble bb)
-     id-bigdec (BigDecimal. (read-biginteger bb) (.getInt bb))
+     id-float  (.readFloat bb)
+     id-double (.readDouble bb)
+     id-bigdec (BigDecimal. (read-biginteger bb) (.readInt bb))
 
      id-ratio (/ (bigint (read-biginteger bb))
                  (bigint (read-biginteger bb)))
@@ -266,7 +267,7 @@
      ;;; DEPRECATED
      id-old-reader (read-string (read-utf8 bb))
      id-old-string (read-utf8 bb)
-     id-old-map    (apply hash-map (utils/repeatedly-into [] (* 2 (.getInt bb))
+     id-old-map    (apply hash-map (utils/repeatedly-into [] (* 2 (.readInt bb))
                                      #(thaw-from-buffer bb)))
 
      (throw (Exception. (str "Failed to thaw unknown type ID: " type-id))))))
@@ -297,9 +298,7 @@
           (let [^"[B" ba data-ba
                 ba (if password   (encryption/decrypt encryptor password ba) ba)
                 ba (if compressor (compression/decompress compressor ba) ba)
-                bb (doto ^ByteBuffer (ByteBuffer/allocateDirect (alength ba))
-                         (.put ba)
-                         (.flip))]
+                ^ByteBuf bb (Unpooled/wrappedBuffer ba)]
             (binding [*read-eval* read-eval?] (thaw-from-buffer bb))))
         maybe-headers
         (fn []

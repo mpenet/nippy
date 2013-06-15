@@ -6,7 +6,8 @@
   :dependencies [[org.clojure/clojure    "1.4.0"]
                  [expectations           "1.4.43"]
                  [org.iq80.snappy/snappy "0.3"]
-                 [io.netty/netty "4.0.0.Alpha8"]]
+                 [javassist "3.12.1.GA"]
+                 [io.netty/netty-all "4.0.0.CR3"]]
   :profiles {:1.4   {:dependencies [[org.clojure/clojure "1.4.0"]]}
              :1.5   {:dependencies [[org.clojure/clojure "1.5.1"]]}
              :dev   {:dependencies []}

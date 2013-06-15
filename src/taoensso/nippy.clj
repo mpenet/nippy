@@ -8,7 +8,7 @@
              (encryption  :as encryption)])
   (:import  [java.io DataOutputStream ByteArrayOutputStream]
             [java.nio ByteBuffer]
-            [io.netty.buffer Unpooled ByteBuf]
+            [io.netty.buffer Unpooled ByteBuf PooledByteBufAllocator]
             [clojure.lang Keyword BigInt Ratio PersistentQueue PersistentTreeMap
              PersistentTreeSet IPersistentList IPersistentVector IPersistentMap
              IPersistentSet IPersistentCollection]))
@@ -213,6 +213,10 @@
 
 (declare thaw-from-buffer)
 
+(def buffer-allocator
+  ^PooledByteBufAllocator
+  (PooledByteBufAllocator. true))
+
 (defn coll-thaw
   "Thaws simple collection types."
   [coll ^ByteBuf bb]
@@ -298,7 +302,11 @@
           (let [^"[B" ba data-ba
                 ba (if password   (encryption/decrypt encryptor password ba) ba)
                 ba (if compressor (compression/decompress compressor ba) ba)
-                ^ByteBuf bb (Unpooled/wrappedBuffer ba)]
+                ^ByteBuf bb ;; (doto ^ByteBuf (.directBuffer ^PooledByteBufAllocator buffer-allocator
+                            ;;                               (int (alength ba)))
+                            ;;   (.writeBytes ba)
+                            ;;   (.clear))
+                (Unpooled/wrappedBuffer ba)]
             (binding [*read-eval* read-eval?] (thaw-from-buffer bb))))
         maybe-headers
         (fn []
@@ -441,3 +449,5 @@
             :compressor   (when compressed? compression/default-snappy-compressor)
             :password     password
             :legacy-mode  true}))
+
+;; (thaw (freeze stress-data))

@@ -1,6 +1,7 @@
 (ns taoensso.nippy.benchmarks
   {:author "Peter Taoussanis"}
-  (:require [taoensso.nippy :as nippy :refer (freeze thaw)]
+  (:require [clojure.tools.reader.edn :as edn]
+            [taoensso.nippy :as nippy :refer (freeze thaw)]
             [taoensso.nippy.utils :as utils]))
 
 ;; Remove stuff from stress-data that breaks reader
@@ -8,8 +9,8 @@
 
 (defmacro bench* [& body] `(utils/bench 10000 (do ~@body) :warmup-laps 2000))
 
-(defn freeze-reader [x] (binding [*print-dup* false] (pr-str x)))
-(defn thaw-reader   [x] (binding [*read-eval* false] (read-string x)))
+(defn freeze-reader [x] (pr-str x))
+(defn thaw-reader   [x] (edn/read-string x))
 (def  roundtrip-reader (comp thaw-reader freeze-reader))
 
 (def roundtrip-defaults  (comp thaw freeze))
@@ -65,7 +66,13 @@
   ;; (bench {:reader? false :laps 1})
   ;; (bench {:reader? false :laps 2})
 
-  ;;; 17 June 2013: Clojure 1.5.1, Nippy 2.0.0-alpha6 w/fast io-streams
+  ;;; 7 Auguest 2013: Nippy v2.2.0-RC1
+  ;; {:reader    {:round 71582, :freeze 13656, :thaw 56730, :data-size 22964}}
+  ;; {:defaults  {:round 5619,  :freeze 3710,  :thaw 1783,  :data-size 12368}}
+  ;; {:encrypted {:round 9113,  :freeze 5324,  :thaw 3500,  :data-size 12388}}
+  ;; {:fast      {:round 5130,  :freeze 3286,  :thaw 1667,  :data-size 13325}}
+
+  ;;; 17 June 2013: Clojure 1.5.1, JVM 7 Nippy 2.0.0-alpha6 w/fast io-streams
   ;; {:reader    {:round 49819, :freeze 23601, :thaw 26247, :data-size 22966}}
   ;; {:defaults  {:round 5670,  :freeze 3536,  :thaw 1919,  :data-size 12396}}
   ;; {:encrypted {:round 9038,  :freeze 5111,  :thaw 3582,  :data-size 12420}}

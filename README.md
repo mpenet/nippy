@@ -1,15 +1,16 @@
-Current [semantic](http://semver.org/) version:
+**[API docs](http://ptaoussanis.github.io/nippy/)** | **[CHANGELOG](https://github.com/ptaoussanis/nippy/blob/master/CHANGELOG.md)** | [contact & contributing](#contact--contributing) | [other Clojure libs](https://www.taoensso.com/clojure-libraries) | [Twitter](https://twitter.com/#!/ptaoussanis) | current [semantic](http://semver.org/) version:
 
 ```clojure
-[com.taoensso/nippy "1.2.1"]       ; Stable
-[com.taoensso/nippy "2.0.0-beta1"] ; Development (notes below)
+[com.taoensso/nippy "2.2.0-RC1"] ; Development (see CHANGELOG for details)
+[com.taoensso/nippy "2.1.0"]     ; Stable
 ```
 
-v2 adds pluggable compression, crypto support (also pluggable), an improved API (including much better error messages), easier integration into other tools/libraries, and hugely improved performance. 
+v2 adds pluggable compression, crypto support (also pluggable), an improved API (including much better error messages), easier integration into other tools/libraries, and hugely improved performance.
 
-v2 **is backwards compatible**, but please note that the old `freeze-to-bytes`/`thaw-from-bytes` API has been **deprecated** in favor of `freeze`/`thaw`. 
+  * **BREAKING**: Nothing (but please test first).
+  * **DEPRECATED**: `freeze-to-bytes`->`freeze`, `thaw-from-bytes`->`thaw`.
 
-**PLEASE REPORT ANY PROBLEMS!**
+**Migration note**: Please be sure to use `lein clean` to clear old (v1) build artifacts!
 
 # Nippy, a Clojure serialization library
 
@@ -20,8 +21,9 @@ Nippy is an attempt to provide a reliable, high-performance **drop-in alternativ
 ## What's in the box™?
   * Small, uncomplicated **all-Clojure** library.
   * **Great performance**.
-  * Comprehesive, extensible **support for all major data types**.
-  * **Reader-fallback** for difficult/future types (including Clojure 1.4+ tagged literals).
+  * Comprehesive **support for all standard data types**.
+  * **Easily extendable to custom data types**. (v2.1+)
+  * **Reader-fallback** for all other types (including Clojure 1.4+ tagged literals).
   * **Full test coverage** for every supported type.
   * Fully pluggable **compression**, including built-in high-performance [Snappy](http://code.google.com/p/snappy/) compressor.
   * Fully pluggable **encryption**, including built-in high-strength AES128 enabled with a single `:password [:salted "my-password"]` option. (v2+)
@@ -34,7 +36,7 @@ Nippy is an attempt to provide a reliable, high-performance **drop-in alternativ
 Add the necessary dependency to your [Leiningen](http://leiningen.org/) `project.clj` and `require` the library in your ns:
 
 ```clojure
-[com.taoensso/nippy "1.2.1"] ; project.clj
+[com.taoensso/nippy "2.1.0"] ; project.clj
 (ns my-app (:require [taoensso.nippy :as nippy])) ; ns
 ```
 
@@ -115,26 +117,37 @@ Nippy v2+ also gives you **dead simple data encryption**. Add a single option to
 (nippy/thaw   <encrypted-data>  {:password [:salted "my-password"]}) ; Decrypt
 ```
 
-There's two default forms of encryption on offer: `:salted` and `:cached`. Each of these makes carefully-chosen trade-offs and is suited to one of two common use cases. See the `default-aes128-encryptor` [docstring](http://ptaoussanis.github.io/nippy/taoensso.nippy.encryption.html) for a detailed explanation of why/when you'd want one or the other.
+There's two default forms of encryption on offer: `:salted` and `:cached`. Each of these makes carefully-chosen trade-offs and is suited to one of two common use cases. See the `aes128-encryptor` [docstring](http://ptaoussanis.github.io/nippy/taoensso.nippy.encryption.html) for a detailed explanation of why/when you'd want one or the other.
+
+### Custom types (v2.1+, ALPHA - subject to change)
+
+```clojure
+(defrecord MyType [data])
+
+(nippy/extend-freeze MyType 1 ; A unique type id ∈[1, 128]
+  [x data-output-stream]
+  (.writeUTF data-output-stream (:data x)))
+
+(nippy/extend-thaw 1 ; Same type id
+  [data-input-stream]
+  (->MyType (.readUTF data-input-stream)))
+
+(nippy/thaw (nippy/freeze (->MyType "Joe"))) => #taoensso.nippy.MyType{:data "Joe"}
+```
 
 ## Performance
 
-![Comparison chart](https://github.com/ptaoussanis/nippy/raw/master/benchmarks/chart.png)
+![Comparison chart](https://github.com/ptaoussanis/nippy/raw/master/benchmarks.png)
 
 [Detailed benchmark information](https://docs.google.com/spreadsheet/ccc?key=0AuSXb68FH4uhdE5kTTlocGZKSXppWG9sRzA5Y2pMVkE&pli=1#gid=0) is available on Google Docs.
 
-## Project links
+## This project supports the CDS and ![ClojureWerkz](https://raw.github.com/clojurewerkz/clojurewerkz.org/master/assets/images/logos/clojurewerkz_long_h_50.png) goals
 
-  * [API documentation](http://ptaoussanis.github.io/nippy/).
-  * My other [Clojure libraries](https://www.taoensso.com/clojure-libraries) (Redis & DynamoDB clients, logging+profiling, i18n+L10n, serialization, A/B testing).
+  * [CDS](http://clojure-doc.org/), the **Clojure Documentation Site**, is a **contributer-friendly** community project aimed at producing top-notch, **beginner-friendly** Clojure tutorials and documentation. Awesome resource.
 
-##### This project supports the **CDS and ClojureWerkz project goals**:
+  * [ClojureWerkz](http://clojurewerkz.org/) is a growing collection of open-source, **batteries-included Clojure libraries** that emphasise modern targets, great documentation, and thorough testing. They've got a ton of great stuff, check 'em out!
 
-  * [CDS](http://clojure-doc.org/), the **Clojure Documentation Site**, is a contributer-friendly community project aimed at producing top-notch Clojure tutorials and documentation.
-
-  * [ClojureWerkz](http://clojurewerkz.org/) is a growing collection of open-source, batteries-included **Clojure libraries** that emphasise modern targets, great documentation, and thorough testing.
-
-## Contact & contribution
+## Contact & contributing
 
 Please use the [project's GitHub issues page](https://github.com/ptaoussanis/nippy/issues) for project questions/comments/suggestions/whatever **(pull requests welcome!)**. Am very open to ideas if you have any!
 

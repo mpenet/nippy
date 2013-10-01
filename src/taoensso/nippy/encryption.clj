@@ -38,7 +38,6 @@
       (recur (.digest sha512-md ba) (dec n))
       (-> ba (java.util.Arrays/copyOf aes128-block-size)
              (javax.crypto.spec.SecretKeySpec. "AES")))))
-
 (comment
   (time (sha512-key nil "hi" 1))   ; ~40ms per hash (fast)
   (time (sha512-key nil "hi" 5))   ; ~180ms  (default)
@@ -129,7 +128,7 @@
 
   Faster than `aes128-salted`, and harder to attack any particular key - but
   increased danger if a key is somehow compromised."
-  (AES128Encryptor. (atom {})))
+  (->AES128Encryptor (atom {})))
 
 ;;;; Default implementation
 

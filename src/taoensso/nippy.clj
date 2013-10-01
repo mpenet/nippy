@@ -2,20 +2,23 @@
   "Simple, high-performance Clojure serialization library. Originally adapted
   from Deep-Freeze."
   {:author "Peter Taoussanis"}
-  (:require [taoensso.nippy
+  (:require [clojure.tools.reader.edn :as edn]
+            [taoensso.nippy
              (utils       :as utils)
              (compression :as compression :refer (snappy-compressor))
              (encryption  :as encryption  :refer (aes128-encryptor))])
-  (:import  [java.io DataInputStream DataOutputStream]
-            [cc.qbits.grease.io FastByteArrayInputStream FastByteArrayOutputStream]
+  (:import  [java.io DataInputStream DataOutputStream ByteArrayOutputStream
+             ByteArrayInputStream]
+            [java.lang.reflect Method]
+            [java.util Date UUID]
             [clojure.lang Keyword BigInt Ratio PersistentQueue PersistentTreeMap
              PersistentTreeSet IPersistentList IPersistentVector IPersistentMap
-             IPersistentSet IPersistentCollection]))
+             APersistentMap IPersistentSet ISeq IRecord]))
 
 ;;;; Nippy 2.x+ header spec (4 bytes)
 (def ^:private ^:const head-version 1)
 (def ^:private head-sig (.getBytes "NPY" "UTF-8"))
-(def ^:private head-meta "Final byte stores version-dependent metadata."
+(def ^:private ^:const head-meta "Final byte stores version-dependent metadata."
   {(byte 0) {:version 1 :compressed? false :encrypted? false}
    (byte 1) {:version 1 :compressed? true  :encrypted? false}
    (byte 2) {:version 1 :compressed? false :encrypted? true}
@@ -23,11 +26,14 @@
 
 ;;;; Data type IDs
 
+;; **Negative ids reserved for user-defined types**
+
+(def ^:const id-reserved   (int 0))
 ;;                              1
 (def ^:const id-bytes      (int 2))
 (def ^:const id-nil        (int 3))
 (def ^:const id-boolean    (int 4))
-(def ^:const id-reader     (int 5)) ; Fallback: *print-dup* pr-str output
+(def ^:const id-reader     (int 5)) ; Fallback: pr-str output
 
 (def ^:const id-char       (int 10))
 ;;                              11
@@ -39,7 +45,7 @@
 (def ^:const id-vector     (int 21))
 ;;                              22
 (def ^:const id-set        (int 23))
-(def ^:const id-coll       (int 24)) ; Fallback: non-specific collection
+(def ^:const id-seq        (int 24))
 (def ^:const id-meta       (int 25))
 (def ^:const id-queue      (int 26))
 (def ^:const id-map        (int 27))
@@ -58,6 +64,11 @@
 
 (def ^:const id-ratio      (int 70))
 
+(def ^:const id-record     (int 80))
+
+(def ^:const id-date       (int 90))
+(def ^:const id-uuid       (int 91))
+
 ;;; DEPRECATED (old types will be supported only for thawing)
 (def ^:const id-old-reader  (int 1))  ; as of 0.9.2, for +64k support
 (def ^:const id-old-string  (int 11)) ; as of 0.9.2, for +64k support
@@ -67,7 +78,7 @@
 ;;;; Freezing
 (defprotocol Freezable (freeze-to-stream* [this stream]))
 
-(defmacro ^:private write-id    [s id] `(.writeByte ~s ~id))
+(defmacro           write-id    [s id] `(.writeByte ~s ~id))
 (defmacro ^:private write-bytes [s ba]
   `(let [s# ~s ba# ~ba]
      (let [size# (alength ba#)]
@@ -78,18 +89,23 @@
 (defmacro ^:private write-utf8       [s x] `(write-bytes ~s (.getBytes ~x "UTF-8")))
 (defmacro ^:private freeze-to-stream
   "Like `freeze-to-stream*` but with metadata support."
-  [x s]
+  [s x]
   `(let [x# ~x s# ~s]
-     (if-let [m# (meta x#)]
-       (do (write-id s# ~id-meta)
-           (freeze-to-stream* m# s#)))
+     (when-let [m# (meta x#)]
+       (write-id  s# ~id-meta)
+       (freeze-to-stream* m# s#))
      (freeze-to-stream* x# s#)))
+
+(defn freeze-to-stream!
+  "Low-level API. Serializes arg (any Clojure data type) to a DataOutputStream."
+  [^DataOutputStream data-output-stream x & _]
+  (freeze-to-stream data-output-stream x))
 
 (defmacro ^:private freezer
   "Helper to extend Freezable protocol."
   [type id & body]
   `(extend-type ~type
-     ~'Freezable
+     Freezable
      (~'freeze-to-stream* [~'x ~(with-meta 's {:tag 'DataOutputStream})]
        (write-id ~'s ~id)
        ~@body)))
@@ -99,7 +115,7 @@
   [type id & body]
   `(freezer ~type ~id
     (.writeInt ~'s (count ~'x))
-    (doseq [i# ~'x] (freeze-to-stream i# ~'s))))
+    (doseq [i# ~'x] (freeze-to-stream ~'s i#))))
 
 (defmacro ^:private kv-freezer
   "Extends Freezable to key-value collection types."
@@ -107,8 +123,8 @@
   `(freezer ~type ~id
     (.writeInt ~'s (* 2 (count ~'x)))
     (doseq [[k# v#] ~'x]
-      (freeze-to-stream k# ~'s)
-      (freeze-to-stream v# ~'s))))
+      (freeze-to-stream ~'s k#)
+      (freeze-to-stream ~'s v#))))
 
 (freezer (Class/forName "[B") id-bytes   (write-bytes s ^bytes x))
 (freezer nil                  id-nil)
@@ -120,6 +136,10 @@
                                               (str ns "/" (name x))
                                               (name x))))
 
+(freezer IRecord id-record
+         (write-utf8 s (.getName (class x)))
+         (freeze-to-stream s (into {} x)))
+
 (coll-freezer PersistentQueue       id-queue)
 (coll-freezer PersistentTreeSet     id-sorted-set)
 (kv-freezer   PersistentTreeMap     id-sorted-map)
@@ -127,8 +147,8 @@
 (coll-freezer IPersistentList       id-list)
 (coll-freezer IPersistentVector     id-vector)
 (coll-freezer IPersistentSet        id-set)
-(kv-freezer   IPersistentMap        id-map)
-(coll-freezer IPersistentCollection id-coll) ; Must be LAST collection freezer!
+(kv-freezer   APersistentMap        id-map)
+(coll-freezer ISeq                  id-seq)
 
 (freezer Byte       id-byte    (.writeByte s x))
 (freezer Short      id-short   (.writeShort s x))
@@ -146,6 +166,11 @@
 (freezer Ratio id-ratio
          (write-biginteger s (.numerator   x))
          (write-biginteger s (.denominator x)))
+
+(freezer Date id-date (.writeLong s (.getTime x)))
+(freezer UUID id-uuid
+         (.writeLong s (.getMostSignificantBits x))
+         (.writeLong s (.getLeastSignificantBits x)))
 
 ;; Use Clojure's own reader as final fallback
 (freezer Object id-reader (write-bytes s (.getBytes (pr-str x) "UTF-8")))
@@ -165,15 +190,15 @@
 
 (defn freeze
   "Serializes arg (any Clojure data type) to a byte array. Set :legacy-mode to
-  true to produce bytes readble by Nippy < 2.x."
-  ^bytes [x & [{:keys [print-dup? password compressor encryptor legacy-mode]
-                :or   {print-dup? true
-                       compressor snappy-compressor
+  true to produce bytes readable by Nippy < 2.x. For custom types extend the
+  Clojure reader or see `extend-freeze`."
+  ^bytes [x & [{:keys [password compressor encryptor legacy-mode]
+                :or   {compressor snappy-compressor
                        encryptor  aes128-encryptor}}]]
   (when legacy-mode (assert-legacy-args compressor password))
-  (let [ba     (FastByteArrayOutputStream.)
+  (let [ba     (ByteArrayOutputStream.)
         stream (DataOutputStream. ba)]
-    (binding [*print-dup* print-dup?] (freeze-to-stream x stream))
+    (freeze-to-stream! stream x)
     (let [ba (.toByteArray ba)
           ba (if compressor (compression/compress compressor ba) ba)
           ba (if password   (encryption/encrypt encryptor password ba) ba)]
@@ -203,15 +228,16 @@
   [s coll]
   `(let [s# ~s]
      (utils/repeatedly-into ~coll (/ (.readInt s#) 2)
-       [(thaw-from-stream s#) (thaw-from-stream s#)])))
+                            [(thaw-from-stream s#) (thaw-from-stream s#)])))
+
+(declare ^:private custom-readers)
 
 (defn- thaw-from-stream
   [^DataInputStream s]
   (let [type-id (.readByte s)]
-    (utils/case-eval
-     type-id
+    (utils/case-eval type-id
 
-     id-reader  (read-string (read-utf8 s))
+     id-reader  (edn/read-string {:readers *data-readers*} (read-utf8 s))
      id-bytes   (read-bytes s)
      id-nil     nil
      id-boolean (.readBoolean s)
@@ -228,7 +254,7 @@
      id-vector  (coll-thaw s  [])
      id-set     (coll-thaw s #{})
      id-map     (coll-thaw-kvs s  {})
-     id-coll    (seq (coll-thaw s []))
+     id-seq     (coll-thaw s [])
 
      id-meta (let [m (thaw-from-stream s)] (with-meta (thaw-from-stream s) m))
 
@@ -245,14 +271,39 @@
      id-ratio (/ (bigint (read-biginteger s))
                  (bigint (read-biginteger s)))
 
+     id-record
+     (let [class    ^Class (Class/forName (read-utf8 s))
+           meth-sig (into-array Class [IPersistentMap])
+           method   ^Method (.getMethod class "create" meth-sig)]
+       (.invoke method class (into-array Object [(thaw-from-stream s)])))
+
+     id-date  (Date. (.readLong s))
+     id-uuid  (UUID. (.readLong s) (.readLong s))
+
      ;;; DEPRECATED
-     id-old-reader (read-string (.readUTF s))
+     id-old-reader (edn/read-string (.readUTF s))
      id-old-string (.readUTF s)
      id-old-map    (apply hash-map (utils/repeatedly-into []
                      (* 2 (.readInt s)) (thaw-from-stream s)))
      id-old-keyword (keyword (.readUTF s))
 
-     (throw (Exception. (str "Failed to thaw unknown type ID: " type-id))))))
+     (if-not (neg? type-id)
+       (throw (Exception. (str "Unknown type ID: " type-id)))
+
+       ;; Custom types
+       (if-let [reader (get @custom-readers type-id)]
+         (try (reader s)
+              (catch Exception e
+                (throw (Exception. (str "Reader exception for custom type ID: "
+                                        (- type-id)) e))))
+         (throw (Exception. (str "No reader provided for custom type ID: "
+                                 (- type-id)))))))))
+
+(defn thaw-from-stream!
+  "Low-level API. Deserializes a frozen object from given DataInputStream to its
+  original Clojure data type."
+  [data-input-stream & _]
+  (thaw-from-stream data-input-stream))
 
 (defn- try-parse-header [ba]
   (when-let [[head-ba data-ba] (utils/ba-split ba 4)]
@@ -261,12 +312,10 @@
         [data-ba (head-meta meta-id {:unrecognized-header? true})]))))
 
 (defn thaw
-  "Deserializes frozen bytes to their original Clojure data type. Supports data
-  frozen with current and all previous versions of Nippy.
-
-  WARNING: Enabling `:read-eval?` can lead to security vulnerabilities unless
-  you are sure you know what you're doing."
-  [^bytes ba & [{:keys [read-eval? password compressor encryptor legacy-opts]
+  "Deserializes a frozen object from given byte array to its original Clojure
+  data type. Supports data frozen with current and all previous versions of
+  Nippy. For custom types extend the Clojure reader or see `extend-thaw`."
+  [^bytes ba & [{:keys [password compressor encryptor legacy-opts]
                  :or   {legacy-opts {:compressed? true}
                         compressor  snappy-compressor
                         encryptor   aes128-encryptor}
@@ -283,8 +332,10 @@
               (let [ba data-ba
                     ba (if password (encryption/decrypt encryptor password ba) ba)
                     ba (if compressor (compression/decompress compressor ba) ba)
-                    stream (DataInputStream. (FastByteArrayInputStream. ba))]
-                (binding [*read-eval* read-eval?] (thaw-from-stream stream)))
+                    stream (DataInputStream. (ByteArrayInputStream. ba))]
+
+                (thaw-from-stream! stream))
+
               (catch Exception e
                 (cond
                  password   (ex "Wrong password/encryptor?" e)
@@ -307,7 +358,9 @@
        :else (try (try-thaw-data data-ba head-meta)
                   (catch Exception e
                     (if legacy-opts
-                      (try-thaw-data ba nil)
+                      (try (try-thaw-data ba nil)
+                           (catch Exception _
+                             (throw e)))
                       (throw e)))))
 
       ;; Header definitely not okay
@@ -319,6 +372,39 @@
          (thaw (freeze "hello" {:compressor nil}))
          (thaw (freeze "hello" {:password [:salted "p"]})) ; ex
          (thaw (freeze "hello") {:password [:salted "p"]}))
+
+;;;; Custom types
+
+(defmacro extend-freeze
+  "Alpha - subject to change.
+  Extends Nippy to support freezing of a custom type with id ∈[1, 128]:
+  (defrecord MyType [data])
+  (extend-freeze MyType 1 [x data-output-stream]
+    (.writeUTF [data-output-stream] (:data x)))"
+  [type custom-type-id [x stream] & body]
+  (assert (and (>= custom-type-id 1) (<= custom-type-id 128)))
+  `(extend-type ~type
+     Freezable
+     (~'freeze-to-stream* [~x ~(with-meta stream {:tag 'java.io.DataOutputStream})]
+       (write-id ~stream ~(int (- custom-type-id)))
+       ~@body)))
+
+(defonce custom-readers (atom {})) ; {<custom-type-id> (fn [data-input-stream]) ...}
+(defmacro extend-thaw
+  "Alpha - subject to change.
+  Extends Nippy to support thawing of a custom type with id ∈[1, 128]:
+  (extend-thaw 1 [data-input-stream]
+    (->MyType (.readUTF data-input-stream)))"
+  [custom-type-id [stream] & body]
+  (assert (and (>= custom-type-id 1) (<= custom-type-id 128)))
+  `(swap! custom-readers assoc ~(int (- custom-type-id))
+          (fn [~(with-meta stream {:tag 'java.io.DataInputStream})]
+            ~@body)))
+
+(comment (defrecord MyType [data])
+         (extend-freeze MyType 1 [x s] (.writeUTF s (:data x)))
+         (extend-thaw 1 [s] (->MyType (.readUTF s)))
+         (thaw (freeze (->MyType "Joe"))))
 
 ;;;; Stress data
 
@@ -377,17 +463,14 @@
     (throw (AssertionError. "Only Snappy compressor supported in legacy mode."))))
 
 (defn freeze-to-bytes "DEPRECATED: Use `freeze` instead."
-  ^bytes [x & {:keys [print-dup? compress?]
-               :or   {print-dup? true
-                      compress?  true}}]
+  ^bytes [x & {:keys [compress?]
+               :or   {compress? true}}]
   (freeze x {:legacy-mode  true
-             :print-dup?   print-dup?
              :compressor   (when compress? snappy-compressor)
              :password     nil}))
 
 (defn thaw-from-bytes "DEPRECATED: Use `thaw` instead."
-  [ba & {:keys [read-eval? compressed?]
+  [ba & {:keys [compressed?]
          :or   {compressed? true}}]
   (thaw ba {:legacy-opts  {:compressed? compressed?}
-            :read-eval?   read-eval?
             :password     nil}))
